@@ -1,44 +1,56 @@
 import os
+import cv2
 import argparse
-from PIL import Image, ImageOps
+from pathlib import Path
 
-def resize_images(input_dir):
-    for filename in os.listdir(input_dir):
-        file_path = os.path.join(input_dir, filename)
+def resize_and_convert_fast(input_dir, max_side=1000):
+    input_dir = Path(input_dir)
+    output_dir = Path("resized_jpg")
+    output_dir.mkdir(exist_ok=True)
 
-        if filename.lower().endswith((".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tiff")):
-            try:
-                with Image.open(file_path) as img:
-                    # EXIF orientatsiyasini tekislash
-                    img = ImageOps.exif_transpose(img)
+    valid_ext = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tiff"}
 
-                    w, h = img.size
+    for file_path in input_dir.iterdir():
+        if file_path.suffix.lower() not in valid_ext:
+            continue
+        if not file_path.is_file():
+            continue
 
-                    if w <= 1000 and h <= 1000:
-                        print(f"Skip (small): {filename} ({w}x{h})")
-                        continue
+        try:
+            # Rasmdan meta ma'lumotni o‘qimasdan to‘g‘ridan-to‘g‘ri numpy array sifatida o‘qish
+            img = cv2.imread(str(file_path))
+            if img is None:
+                print(f"❌ Failed to read {file_path.name}")
+                continue
 
-                    if w == h:
-                        new_size = (1000, 1000)
-                    else:
-                        if w > h:
-                            scale = 1000 / float(w)
-                        else:
-                            scale = 1000 / float(h)
-                        new_size = (int(w * scale), int(h * scale))
+            h, w = img.shape[:2]
+            longest_side = max(w, h)
 
-                    resized = img.resize(new_size, Image.LANCZOS)
-                    resized.save(file_path)
+            if longest_side > max_side:
+                scale = max_side / float(longest_side)
+                new_w, new_h = int(w * scale), int(h * scale)
+                img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
+            else:
+                new_w, new_h = w, h
 
-                    print(f"Resized: {filename} -> {new_size}")
+            # BGR → RGB shart emas, chunki cv2 imwrite jpg uchun BGR ni qabul qiladi
+            out_path = output_dir / f"{file_path.stem}.jpg"
 
-            except Exception as e:
-                print(f"Error processing {filename}: {e}")
+            # .jpg formatda yozamiz (95% sifat)
+            cv2.imwrite(str(out_path), img, [cv2.IMWRITE_JPEG_QUALITY, 95])
+
+            print(f"✅ Saved: {out_path.name} ({new_w}x{new_h})")
+
+        except Exception as e:
+            print(f"❌ Error processing {file_path.name}: {e}")
+
+    print(f"\n🚀 All done! Converted images saved to: {output_dir}")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--images", required=True, help="Path to the images folder")
+    parser.add_argument("--max-size", type=int, default=1000, help="Max side length (default=1000)")
     args = parser.parse_args()
 
-    resize_images(args.images)
+    resize_and_convert_fast(args.images, args.max_size)
